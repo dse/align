@@ -141,9 +141,9 @@ package My::Align {
         has patterns     => (is => 'rw', default => sub { return []; });
         has lines        => (is => 'rw', default => sub { return []; });
         has repeat       => (is => 'rw', default => 0);
-        has spacesBefore => (is => 'rw', default => 1);
-        has spacesAfter  => (is => 'rw', default => 1);
-        has alignBefore  => (is => 'rw', default => 1);
+        has spacesBefore => (is => 'rw', default => 1); # -B, --spaces-before
+        has spacesAfter  => (is => 'rw', default => 1); # -A, --spaces-after
+        has alignBefore  => (is => 'rw', default => 1); # -b, --align-before; -a, --align-after
         has verbose      => (is => 'rw', default => 0);
         has matcher      => (is => 'rw', default => 'fixed-strings');
     }
