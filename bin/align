@@ -264,8 +264,11 @@ package My::Align {
     }
     sub appendSpaces {
         my ($self, $numSpaces, @lines) = @_;
-        foreach my $line (@lines) {
-            $line->{result} .= ' ' x $numSpaces;
+        my $hasContents = scalar grep { m{\S} } map { $_->{result} } @lines;
+        if ($hasContents) {
+            foreach my $line (@lines) {
+                $line->{result} .= ' ' x $numSpaces;
+            }
         }
     }
     sub padLines {
