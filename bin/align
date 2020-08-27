@@ -59,6 +59,61 @@ while (<>) {
 $align->printAlignedLines();
 
 #------------------------------------------------------------------------------
+
+=head1 NAME
+
+align - align columns of text by pattern
+
+=head1 SYNOPSIS
+
+    align [<option> ...] <pattern> [<filename> ...]
+    align [<option> ...] -e <pattern> ... [<filename> ...]
+
+Options:
+
+    -r, --repeat
+
+=head1 DESCRIPTION
+
+This program lines up its input text by one or more patterns.
+
+    $ cat 1.txt
+    John Jacob@Jingleheimerschmidt@5300
+    John@Doe@1200
+    Janet@Smith@900
+
+    $ align '@' 1.txt
+    John Jacob @ Jingleheimerschmidt@5300
+    John       @ Doe@1200
+    Janet      @ Smith@900
+
+This program takes its input from standard input or from the contents
+of one or more files whose names are specified on the command line.
+
+While doing so, it expands tabs, assuming they're 8 spaces wide.
+
+=head1 OPTIONS
+
+=over 4
+
+=item -r, --repeat
+
+=back
+
+=head1 BUGS
+
+=head1 AUTHOR
+
+Darren Embry
+
+=head1 COPYRIGHT
+
+Copyright 2020 Darren Embry.  Use and distribute under the same terms
+as Perl itself.
+
+=cut
+
+#------------------------------------------------------------------------------
 package My::Align {
     use Text::Tabs qw(expand);
     use List::Util qw(max);
