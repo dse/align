@@ -26,6 +26,8 @@ my $align = My::Align->new();
 use Getopt::Long;
 Getopt::Long::Configure('bundling', 'gnu_compat', 'no_ignore_case');
 Getopt::Long::GetOptions(
+    'a|after|align-after'   => sub { $align->alignBefore(0); },
+    'b|before|align-before' => sub { $align->alignBefore(1); },
     'e|pattern=s'     => sub { $align->addPattern($_[1]); },
     'r|repeat'        => sub { $align->repeat(1); },
     'F|fixed-strings' => sub { $align->matcher('fixed-strings'); },
@@ -238,10 +240,11 @@ package My::Align {
         }
         $self->trimLinesAtEnd(@matchingLines);
         $self->padLines(@matchingLines) if $self->alignBefore;
-        $self->appendSpaces($self->spacesBefore, @matchingLines) if $self->spacesBefore;
+        $self->appendSpaces($self->spacesBefore, @matchingLines) if $self->spacesBefore && $self->alignBefore;
         foreach my $line (@matchingLines) {
             $line->{result} .= $line->{match};
             $line->{buffer} = $line->{post};
+            delete $line->{post};
             delete $line->{match};
         }
         $self->trimLinesAtEnd(@matchingLines);
@@ -253,13 +256,13 @@ package My::Align {
     sub trimLinesAtEnd {
         my ($self, @lines) = @_;
         foreach my $line (@lines) {
-            $line->{result} =~ s{\s+$}{};
+            $line->{result} =~ s{\s*$}{};
         }
     }
     sub trimLinesAtStart {
         my ($self, @lines) = @_;
         foreach my $line (@lines) {
-            $line->{buffer} =~ s{^\s+}{};
+            $line->{buffer} =~ s{^\s*}{};
         }
     }
     sub appendSpaces {
@@ -283,7 +286,7 @@ package My::Align {
     sub printLines {
         my ($self) = @_;
         foreach my $line (@{$self->lines}) {
-            my $text = $line->{result} . ($line->{post} // '');
+            my $text = $line->{result} . ($line->{buffer} // '');
             $text =~ s{\s+$}{};
             print "$text\n";
         }
