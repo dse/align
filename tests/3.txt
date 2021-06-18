@@ -1,0 +1,8 @@
+   host: "aaaa",
+   release::  "aaaaaaaa",
+   id: "aa",
+   username:::   "aaaa",
+   password: "aaaaaa",
+   publicKey::  "aa",
+   privateKey: "aaaa",
+   clientId: "aaaaaa",
