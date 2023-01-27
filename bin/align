@@ -1,322 +1,113 @@
 #!/usr/bin/env perl
 use warnings;
 use strict;
-use utf8;
-
-#------------------------------------------------------------------------------
+use open qw(:locale);
 use File::Basename qw(basename);
 our $PROGNAME = basename($0);
-
-#------------------------------------------------------------------------------
-use open IO => qw(:locale);
-use Encode::Locale;
-use Encode qw(decode);
-BEGIN {
-    @ARGV = map { decode('locale', $_, Encode::FB_CROAK) } @ARGV;
-}
-
-#------------------------------------------------------------------------------
-our $verbose = 0;
-our $debug = 0;
-
-my $align = My::Align->new();
-
-#------------------------------------------------------------------------------
 use Getopt::Long;
-Getopt::Long::Configure('bundling', 'gnu_compat', 'no_ignore_case');
+use Text::Tabs qw(expand);
+use List::Util qw(max);
+
+Getopt::Long::Configure(qw(gnu_compat bundling no_ignore_case));
 Getopt::Long::GetOptions(
-    'a|after|align-after'   => sub { $align->alignBefore(0); },
-    'b|before|align-before' => sub { $align->alignBefore(1); },
-    'e|pattern=s'     => sub { $align->addPattern($_[1]); },
-    'r|repeat'        => sub { $align->repeat(1); },
-    'F|fixed-strings' => sub { $align->matcher('fixed-strings'); },
-    'P|perl-regexp'   => sub { $align->matcher('perl-regexp'); },
-    'b|before'        => sub { $align->alignBefore(1); },
-    'a|after'         => sub { $align->alignBefore(0); },
-    'v|verbose+'      => \$verbose,
-    'debug+'          => \$debug,
-    'h|help'          => sub { usage(); exit(0); },
-) or die("Type '$PROGNAME --help' for help.\n");
+    'a|after|align-after'   => sub { set_align_after(); },
+    'b|before|align-before' => sub { set_align_before(); },
+    'e|pattern=s'           => sub { add_pattern($_[1]); },
+    'r|repeat'              => sub { set_repeat(); },
+    'F|fixed-strings'       => sub { set_fixed_strings(); },
+    'P|perl-regexp'         => sub { set_perl_regexp(); },
+    's|skip=s'              => sub { skip_pattern($_[1]); },
+    'h|help'                => sub { usage(); exit(0); },
+) or die(":-(\n");
 
-sub usage { print(<<"END"); }
-usage:
-    $PROGNAME [<option> ...] [<filename> ...]
-options:
-    -e, --pattern=<pattern>
-    -r, --repeat
-    -F, --fixed-strings
-    -P, --perl-regexp
-    -v, --verbose
-        --debug
-    -h, --help
-END
-
-if (!scalar @{$align->patterns}) {
-    if (!scalar @ARGV) {
-        die("$PROGNAME: pattern must be specified\n");
-    }
-    my $pattern = shift(@ARGV);
-    $align->addPattern($pattern);
-}
-
-$align->verbose($verbose);
-$align->debug($debug);
 while (<>) {
-    $align->addLine($_);
-    if ($verbose) {
-        warn("Read $. lines\n");
+    add_line($_);
+    if (eof(\*ARGV)) {
+        print_lines();
+        clear();
     }
 }
-$align->printAlignedLines();
 
-#------------------------------------------------------------------------------
-
-=head1 NAME
-
-align - align columns of text by pattern
-
-=head1 SYNOPSIS
-
-    align [<option> ...] <pattern> [<filename> ...]
-    align [<option> ...] -e <pattern> -e <pattern> ... [<filename> ...]
-
-Options:
-
-    -r, --repeat
-    -P, --perl-regexp
-    -F, --fixed-strings
-    -e, --pattern=<pattern>
-
-=head1 DESCRIPTION
-
-This program lines up its input text by one or more patterns.
-
-    $ cat 1.txt
-    John Jacob@Jingleheimerschmidt@5300
-    John@Doe@1200
-    Janet@Smith@900
-
-    $ align '@' 1.txt
-    John Jacob @ Jingleheimerschmidt@5300
-    John       @ Doe@1200
-    Janet      @ Smith@900
-
-Patterns can be repeated:
-
-    $ align -r @ 1.txt
-    John Jacob @ Jingleheimerschmidt @ 5300
-    John       @ Doe                 @ 1200
-    Janet      @ Smith               @ 900
-
-This program takes its input from standard input or from the contents
-of one or more files whose names are specified on the command line.
-
-While doing so, it expands tabs, assuming they're 8 spaces wide.
-
-=head1 OPTIONS
-
-=over 4
-
-=item -r, --repeat
-
-Repeat any pattern(s) specified.
-
-=item -P, --perl-regexp
-
-Interpret any subsequently specified pattern(s) as Perl regular
-expressions.
-
-=item -F, --fixed-strings
-
-Interpret any subsequently specified pattern(s) as fixed strings.
-
-=item -e, --pattern=<pattern>
-
-To specify multiple patterns, specify this option with an argument
-once or more.
-
-=back
-
-=head1 BUGS
-
-=head1 AUTHOR
-
-Darren Embry
-
-=head1 COPYRIGHT
-
-Copyright 2020 Darren Embry.  Use and distribute under the same terms
-as Perl itself.
-
-=cut
-
-#------------------------------------------------------------------------------
-package My::Align {
-    use Text::Tabs qw(expand);
-    use List::Util qw(max);
-    use Moo;
-    INIT {
-        has patterns     => (is => 'rw', default => sub { return []; });
-        has lines        => (is => 'rw', default => sub { return []; });
-        has repeat       => (is => 'rw', default => 0);
-        has spacesBefore => (is => 'rw', default => 1); # -B, --spaces-before
-        has spacesAfter  => (is => 'rw', default => 1); # -A, --spaces-after
-        has alignBefore  => (is => 'rw', default => 1); # -b, --align-before; -a, --align-after
-        has verbose      => (is => 'rw', default => 0);
-        has debug        => (is => 'rw', default => 0);
-        has matcher      => (is => 'rw', default => 'fixed-strings');
+our $repeat;
+our @lines;
+our @instructions;
+our $matcher;
+our $align_after;
+BEGIN {
+    $repeat = 0;
+    $matcher = 'fixed';
+    $align_after = 0;
+}
+sub clear {
+    @lines = ();
+}
+sub add_line {
+    my ($line) = @_;
+    $line =~ s{\R\z}{};
+    $line = expand($line);
+    push(@lines, { line => $line, result => '' });
+}
+sub print_lines {
+    foreach my $instruction (@instructions) {
+        $instruction->();
     }
-    sub addPattern {
-        my ($self, $pattern) = @_;
-        push(@{$self->patterns}, {
-            regexp => $self->createRegexp($pattern),
-        });
+    foreach my $line (@lines) {
+        print($line->{result} . $line->{line} . "\n");
     }
-    sub createRegexp {
-        my ($self, $pattern) = @_;
-        if ($self->matcher eq 'perl-regexp') {
-            return qr{$pattern};
-        }
-        return qr{\Q$pattern\E};
-    }
-    sub addLine {
-        my ($self, $text) = @_;
-        $text =~ s{\R\z}{};     # safer chomp
-        $text = expand($text);
-        push(@{$self->lines}, {
-            text => $text,
-            filename => $ARGV,
-            number => $.,
-        });
-    }
-    sub printAlignedLines {
-        my ($self) = @_;
-        $self->initLines();
-        if ($self->repeat) {
-            while (1) {
-                if (!$self->runPatterns()) {
-                    last;
-                }
-            }
-        } else {
-            $self->runPatterns();
-        }
-        $self->finalizeLines();
-        $self->printLines();
-    }
-    sub initLines {
-        my ($self) = @_;
-        foreach my $line (@{$self->lines}) {
-            $line->{result} = '';
-            delete $line->{match};
-            delete $line->{post};
-            $line->{buffer} = $line->{text};
-        }
-    }
-    sub finalizeLines {
-        my ($self) = @_;
-    }
-    sub runPatterns {
-        my ($self) = @_;
-        my $match = 0;
-        foreach my $pattern (@{$self->patterns}) {
-            if ($self->runPattern($pattern)) {
-                $match = 1;
-            }
-        }
-        return $match;
-    }
-    sub runPattern {
-        my ($self, $pattern) = @_;
-        my $regexp = $pattern->{regexp};
-        my $match = 0;
-        if ($self->verbose) {
-            warn("Running pattern [$regexp]\n");
-        }
-        foreach my $line (@{$self->lines}) {
-            if ($line->{buffer} =~ $regexp) {
-                my ($pre, $match, $post) = ($`, $&, $');
-                $line->{pre} = $pre;
-                $line->{result} .= $pre;
-                $line->{match} = $match;
-                $line->{post} = $post;
+}
+sub set_align_before {
+    push(@instructions, sub { $align_after = 0; });
+}
+sub set_align_after {
+    push(@instructions, sub { $align_after = 1; });
+}
+sub add_pattern {
+    my ($pattern) = @_;
+    push(@instructions,
+         sub {
+             $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+             swallow($pattern);
+             align();
+         });
+}
+sub skip_pattern {
+    my ($pattern) = @_;
+    push(@instructions,
+         sub {
+             $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+             swallow($pattern);
+         });
+}
+sub set_repeat {
+    $repeat = 1;
+}
+sub set_fixed_strings {
+    $matcher = 'fixed';
+}
+sub set_perl_regexp {
+    $matcher = 'perl';
+}
+sub swallow {
+    my ($pattern, %args) = @_;
+    foreach my $line (@lines) {
+        if ($line->{line} =~ $pattern) {
+            if ($align_after) {
+                $line->{result} .= $` . $&;
+                $line->{line} = $';
             } else {
-                $line->{pre} = undef;
-                $line->{match} = undef;
-                $line->{post} = $line->{buffer};
+                $line->{result} .= $`;
+                $line->{line} = $& . $';
             }
-        }
-        my @matchingLines = grep { defined $_->{match} } @{$self->lines};
-        if ($self->verbose) {
-            warn(sprintf("  %d lines match\n", scalar @matchingLines));
-        }
-        if (!scalar @matchingLines) {
-            foreach my $line (@{$self->lines}) {
-                delete $line->{match};
-                delete $line->{buffer};
-                $line->{result} .= $line->{post};
-                delete $line->{post};
-            }
-            return 0;
-        }
-        $self->trimLinesAtEnd(@matchingLines);
-        if ($self->alignBefore) {
-            $self->padLines(@matchingLines);
-            if ($self->spacesBefore) {
-                $self->appendSpaces($self->spacesBefore, @matchingLines);
-            }
-        }
-        foreach my $line (@matchingLines) {
-            $line->{result} .= $line->{match};
-            $line->{buffer} = $line->{post};
-            delete $line->{post};
-            delete $line->{match};
-            delete $line->{post};
-        }
-        $self->trimLinesAtEnd(@matchingLines);
-        $self->padLines(@matchingLines);
-        if ($self->spacesAfter) {
-            $self->appendSpaces($self->spacesAfter, @matchingLines);
-        }
-        $self->trimBuffersAtStart(@matchingLines);
-        return 1;
-    }
-    sub trimLinesAtEnd {
-        my ($self, @lines) = @_;
-        foreach my $line (@lines) {
-            $line->{result} =~ s{\s*$}{};
+            $line->{match} = 1;
+        } else {
+            $line->{match} = 0;
         }
     }
-    sub trimBuffersAtStart {
-        my ($self, @lines) = @_;
-        foreach my $line (@lines) {
-            $line->{buffer} =~ s{^\s*}{};
-        }
+}
+sub align {
+    my @matching_lines = grep { $_->{match} } @lines;
+    my $width = max map { length($_->{result}) } @matching_lines;
+    foreach my $line (@matching_lines) {
+        $line->{result} = sprintf('%-*s', $width, $line->{result});
     }
-    sub appendSpaces {
-        my ($self, $numSpaces, @lines) = @_;
-        my $hasContents = scalar grep { m{\S} } map { $_->{result} } @lines;
-        if ($hasContents) {
-            foreach my $line (@lines) {
-                $line->{result} .= ' ' x $numSpaces;
-            }
-        }
-    }
-    sub padLines {
-        my ($self, @lines) = @_;
-        my $maxLength = max map { length $_->{result} } @lines;
-        foreach my $line (@lines) {
-            my $length = length $line->{result};
-            my $numSpaces = $maxLength - $length;
-            $line->{result} .= ' ' x $numSpaces;
-        }
-    }
-    sub printLines {
-        my ($self) = @_;
-        foreach my $line (@{$self->lines}) {
-            my $text = $line->{result} . ($line->{buffer} // '');
-            $text =~ s{\s+$}{};
-            print "$text\n";
-        }
-    }
-};
+}
