@@ -16,7 +16,6 @@ BEGIN {
 }
 
 #------------------------------------------------------------------------------
-our @patterns;
 our $verbose = 0;
 our $debug = 0;
 
@@ -52,7 +51,7 @@ options:
     -h, --help
 END
 
-if (!scalar @patterns) {
+if (!scalar @{$align->patterns}) {
     if (!scalar @ARGV) {
         die("$PROGNAME: pattern must be specified\n");
     }
