@@ -24,7 +24,7 @@ while (<>) {
     add_line($_);
     if (eof(\*ARGV)) {
         print_lines();
-        clear();
+        reset();
     }
 }
 
@@ -34,12 +34,16 @@ our @instructions;
 our $matcher;
 our $align_after;
 BEGIN {
-    $repeat = 0;
-    $matcher = 'fixed';
-    $align_after = 0;
+    reset();
 }
-sub clear {
+sub reset {
+    # after each file, instructions are executed, then this is
+    # executed.
+    $repeat = 0;
     @lines = ();
+    @instructions = ();
+    $matcher = 'perl';
+    $align_after = 0;
 }
 sub add_line {
     my ($line) = @_;
@@ -63,23 +67,18 @@ sub set_align_after {
 }
 sub add_pattern {
     my ($pattern) = @_;
-    push(@instructions,
-         sub {
-             $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-             swallow($pattern);
-             align();
-         });
+    $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+    print("add     $pattern\n");
+    push(@instructions, sub { swallow($pattern); });
 }
 sub skip_pattern {
     my ($pattern) = @_;
-    push(@instructions,
-         sub {
-             $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-             swallow($pattern);
-         });
+    $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+    print("skip    $pattern\n");
+    push(@instructions, sub { swallow($pattern, skip => 1); });
 }
 sub set_repeat {
-    $repeat = 1;
+    push(@instructions, sub { $repeat = 1; });
 }
 sub set_fixed_strings {
     $matcher = 'fixed';
@@ -89,25 +88,46 @@ sub set_perl_regexp {
 }
 sub swallow {
     my ($pattern, %args) = @_;
+    print("swallow $pattern\n");
+    my @matching;
     foreach my $line (@lines) {
         if ($line->{line} =~ $pattern) {
-            if ($align_after) {
-                $line->{result} .= $` . $&;
-                $line->{line} = $';
-            } else {
-                $line->{result} .= $`;
-                $line->{line} = $& . $';
-            }
-            $line->{match} = 1;
+            $line->{pre} = $`;
+            $line->{match} = $&;
+            $line->{post} = $';
+            push(@matching, $line);
         } else {
-            $line->{match} = 0;
+            delete $line->{pre};
+            delete $line->{match};
+            delete $line->{post};
+        }
+    }
+    if ($args{skip}) {
+        foreach my $line (@matching) {
+            $line->{result} .= $line->{pre} . $line->{match};
+            $line->{line} = $line->{post};
+        }
+    } elsif ($align_after) {
+        foreach my $line (@matching) {
+            $line->{result} .= $line->{pre} . $line->{match};
+            $line->{line} = $line->{post};
+        }
+        align();
+    } else {
+        foreach my $line (@matching) {
+            $line->{result} .= $line->{pre};
+        }
+        align();
+        foreach my $line (@matching) {
+            $line->{result} .= $line->{match};
+            $line->{line} = $line->{post};
         }
     }
 }
 sub align {
-    my @matching_lines = grep { $_->{match} } @lines;
-    my $width = max map { length($_->{result}) } @matching_lines;
-    foreach my $line (@matching_lines) {
+    my @matching = grep { defined $_->{match} } @lines;
+    my $width = max map { length($_->{result}) } @matching;
+    foreach my $line (@matching) {
         $line->{result} = sprintf('%-*s', $width, $line->{result});
     }
 }
