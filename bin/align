@@ -10,10 +10,12 @@ use List::Util qw(max);
 
 Getopt::Long::Configure(qw(gnu_compat bundling no_ignore_case));
 Getopt::Long::GetOptions(
+    'l|left|align-left'     => sub { set_align_left(); },
+    'r|right|align-right'   => sub { set_align_right(); },
     'a|after|align-after'   => sub { set_align_after(); },
     'b|before|align-before' => sub { set_align_before(); },
     'e|pattern=s'           => sub { add_pattern($_[1]); },
-    'r|repeat'              => sub { set_repeat(); },
+    'R|repeat'              => sub { set_repeat(); },
     'F|fixed-strings'       => sub { set_fixed_strings(); },
     'P|perl-regexp'         => sub { set_perl_regexp(); },
     's|skip=s'              => sub { skip_pattern($_[1]); },
@@ -33,6 +35,7 @@ our @lines;
 our @instructions;
 our $matcher;
 our $align_after;
+our $align_right;
 BEGIN {
     reset();
 }
@@ -44,6 +47,7 @@ sub reset {
     @instructions = ();
     $matcher = 'perl';
     $align_after = 0;
+    $align_right = 0;
 }
 sub add_line {
     my ($line) = @_;
@@ -59,33 +63,23 @@ sub print_lines {
         print($line->{result} . $line->{line} . "\n");
     }
 }
-sub set_align_before {
-    push(@instructions, sub { $align_after = 0; });
-}
-sub set_align_after {
-    push(@instructions, sub { $align_after = 1; });
-}
+sub set_align_before { print("[B]\n"); push(@instructions, sub { print("before\n"); $align_after = 0; }); }
+sub set_align_after  { print("[A]\n"); push(@instructions, sub { print("after\n");  $align_after = 1; }); }
+sub set_align_right  { print("[R]\n"); push(@instructions, sub { print("right\n");  $align_right = 1; }); }
+sub set_align_left   { print("[L]\n"); push(@instructions, sub { print("left\n");   $align_right = 0; }); }
 sub add_pattern {
     my ($pattern) = @_;
     $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-    print("add     $pattern\n");
     push(@instructions, sub { swallow($pattern); });
 }
 sub skip_pattern {
     my ($pattern) = @_;
     $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-    print("skip    $pattern\n");
     push(@instructions, sub { swallow($pattern, skip => 1); });
 }
-sub set_repeat {
-    push(@instructions, sub { $repeat = 1; });
-}
-sub set_fixed_strings {
-    $matcher = 'fixed';
-}
-sub set_perl_regexp {
-    $matcher = 'perl';
-}
+sub set_repeat { push(@instructions, sub { print("repeat\n"); $repeat = 1; }); }
+sub set_fixed_strings { $matcher = 'fixed'; }
+sub set_perl_regexp { $matcher = 'perl'; }
 sub swallow {
     my ($pattern, %args) = @_;
     print("swallow $pattern\n");
@@ -128,6 +122,10 @@ sub align {
     my @matching = grep { defined $_->{match} } @lines;
     my $width = max map { length($_->{result}) } @matching;
     foreach my $line (@matching) {
-        $line->{result} = sprintf('%-*s', $width, $line->{result});
+        if ($align_right) {
+            $line->{result} = sprintf('%*s', $width, $line->{result});
+        } else {
+            $line->{result} = sprintf('%-*s', $width, $line->{result});
+        }
     }
 }
