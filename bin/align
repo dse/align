@@ -3,129 +3,312 @@ use warnings;
 use strict;
 use open qw(:locale);
 use File::Basename qw(basename);
-our $PROGNAME = basename($0);
 use Getopt::Long;
 use Text::Tabs qw(expand);
-use List::Util qw(max);
+use List::Util qw(min max all any);
 
-Getopt::Long::Configure(qw(gnu_compat bundling no_ignore_case));
-Getopt::Long::GetOptions(
-    'l|left|align-left'     => sub { set_align_left(); },
-    'r|right|align-right'   => sub { set_align_right(); },
-    'a|after|align-after'   => sub { set_align_after(); },
-    'b|before|align-before' => sub { set_align_before(); },
-    'e|pattern=s'           => sub { add_pattern($_[1]); },
-    'R|repeat'              => sub { set_repeat(); },
-    'F|fixed-strings'       => sub { set_fixed_strings(); },
-    'P|perl-regexp'         => sub { set_perl_regexp(); },
-    's|skip=s'              => sub { skip_pattern($_[1]); },
-    'h|help'                => sub { usage(); exit(0); },
-) or die(":-(\n");
+our $matcher = 'perl';
+our $after_before = 'before';
+our $left_right = 'left';
+our @alignments;
+our @lines;
 
-while (<>) {
-    add_line($_);
-    if (eof(\*ARGV)) {
+get_options();
+require_pattern();
+run();
+
+sub run {
+    foreach my $alignment (@alignments) {
+        my $matcher = $alignment->{matcher};
+        my $pattern = $alignment->{pattern};
+        my $regexp = $matcher eq 'perl' ?
+          qr{ (?<sp1>[ ]*) (?<sep>$pattern)       (?<sp2>[ ]*) }x :
+          qr{ (?<sp1>[ ]*) (?<sep>\Q${pattern}\E) (?<sp2>[ ]*) }x;
+        $alignment->{regexp} = $regexp;
+    }
+    my $oldargv;
+    while (<>) {
+        if (!defined $oldargv || $ARGV ne $oldargv) {
+            print_lines();
+            reset();
+            $oldargv = $ARGV;
+        }
+        add_line($_);
+    }
+    if (scalar @lines) {
         print_lines();
         reset();
     }
 }
 
-our $repeat;
-our @lines;
-our @instructions;
-our $matcher;
-our $align_after;
-our $align_right;
-BEGIN {
-    reset();
-}
-sub reset {
-    # after each file, instructions are executed, then this is
-    # executed.
-    $repeat = 0;
-    @lines = ();
-    @instructions = ();
-    $matcher = 'perl';
-    $align_after = 0;
-    $align_right = 0;
-}
 sub add_line {
     my ($line) = @_;
     $line =~ s{\R\z}{};
     $line = expand($line);
-    push(@lines, { line => $line, result => '' });
+    push(@lines, { in => $line, out => '' });
 }
+
 sub print_lines {
-    foreach my $instruction (@instructions) {
-        $instruction->();
+    foreach my $alignment (@alignments) {
+        my $regexp = $alignment->{regexp};
+        my $after  = $alignment->{after_before} eq 'after';
+        my $before = $alignment->{after_before} eq 'before';
+        my $left   = $alignment->{left_right} eq 'left';
+        my $right  = $alignment->{left_right} eq 'right';
+        my @matches;
+        foreach my $line (@lines) {
+            if ($line->{in} =~ $regexp) {
+                $line->{pre}  = $`;
+                $line->{sp1}  = $+{sp1};
+                $line->{sep}  = $+{sep};
+                $line->{sp2}  = $+{sp2};
+                $line->{post} = $';
+                push(@matches, $line);
+            } else {
+                delete $line->{pre};
+                delete $line->{sp1};
+                delete $line->{sep};
+                delete $line->{sp2};
+                delete $line->{post};
+            }
+        }
+        if (!scalar @matches) {
+            next;
+        }
+        if ($alignment->{skip}) {
+            foreach my $line (@matches) {
+                $line->{out} .= $line->{pre} . $line->{sp1} . $line->{sep} . $line->{sp2};
+                $line->{in} = $line->{post};
+            }
+        } else {
+            foreach my $line (@matches) {
+                $line->{out} .= $line->{pre};
+            }
+            if ($before) {
+                # Line up spaces before the separators. Add an
+                # additional space before the separators if needed.
+                my $max_len = max map { length($_->{out}) } @matches;
+                my @longest = grep { length($_->{out}) == $max_len } @matches;
+                my $add_sp1 = all { length($_->{sp1}) } @longest;
+                $max_len += $add_sp1 ? 1 : 0;
+                foreach my $line (@matches) {
+                    $line->{out} .= ' ' x ($max_len - length($line->{out}));
+                }
+                # Append the separators, aligning them left or right.
+                my $max_sep = max map { length($_->{sep}) } @matches;
+                my $fmt = $left ? "%-${max_sep}s" : "%${max_sep}s";
+                foreach my $line (@matches) {
+                    $line->{out} .= sprintf($fmt, $line->{sep});
+                }
+                # Append an additional space?
+                my @longest_sep = grep { length($_->{sep}) == $max_sep } @matches;
+                my $add_sp2 = all { length($_->{sp2}) } @longest_sep;
+                if ($add_sp2) {
+                    foreach my $line (@matches) {
+                        $line->{out} .= ' ';
+                    }
+                }
+            } else {
+                if (all { length($_->{sp1}) } @matches) {
+                    foreach my $line (@matches) {
+                        $line->{out} .= ' ';
+                    }
+                }
+                # append separators now
+                foreach my $line (@matches) {
+                    $line->{out} .= $line->{sep};
+                }
+                # align before next field
+                my $max_len = max map { length($_->{out}) } @matches;
+                my @longest = grep { length($_->{out}) == $max_len } @matches;
+                my $add_sp2 = all { length($_->{sp2}) } @longest;
+                $max_len += $add_sp2 ? 1 : 0;
+                foreach my $line (@matches) {
+                    $line->{out} .= ' ' x ($max_len - length($line->{out}));
+                }
+            }
+        }
     }
     foreach my $line (@lines) {
-        print($line->{result} . $line->{line} . "\n");
+        print($line->{out} // '', $line->{post} // '', "\n");
     }
 }
-sub set_align_before { print("[B]\n"); push(@instructions, sub { print("before\n"); $align_after = 0; }); }
-sub set_align_after  { print("[A]\n"); push(@instructions, sub { print("after\n");  $align_after = 1; }); }
-sub set_align_right  { print("[R]\n"); push(@instructions, sub { print("right\n");  $align_right = 1; }); }
-sub set_align_left   { print("[L]\n"); push(@instructions, sub { print("left\n");   $align_right = 0; }); }
-sub add_pattern {
-    my ($pattern) = @_;
-    $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-    push(@instructions, sub { swallow($pattern); });
-}
-sub skip_pattern {
-    my ($pattern) = @_;
-    $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
-    push(@instructions, sub { swallow($pattern, skip => 1); });
-}
-sub set_repeat { push(@instructions, sub { print("repeat\n"); $repeat = 1; }); }
-sub set_fixed_strings { $matcher = 'fixed'; }
-sub set_perl_regexp { $matcher = 'perl'; }
-sub swallow {
-    my ($pattern, %args) = @_;
-    print("swallow $pattern\n");
-    my @matching;
-    foreach my $line (@lines) {
-        if ($line->{line} =~ $pattern) {
-            $line->{pre} = $`;
-            $line->{match} = $&;
-            $line->{post} = $';
-            push(@matching, $line);
-        } else {
-            delete $line->{pre};
-            delete $line->{match};
-            delete $line->{post};
-        }
-    }
-    if ($args{skip}) {
-        foreach my $line (@matching) {
-            $line->{result} .= $line->{pre} . $line->{match};
-            $line->{line} = $line->{post};
-        }
-    } elsif ($align_after) {
-        foreach my $line (@matching) {
-            $line->{result} .= $line->{pre} . $line->{match};
-            $line->{line} = $line->{post};
-        }
-        align();
-    } else {
-        foreach my $line (@matching) {
-            $line->{result} .= $line->{pre};
-        }
-        align();
-        foreach my $line (@matching) {
-            $line->{result} .= $line->{match};
-            $line->{line} = $line->{post};
-        }
+
+sub align_lines {
+    my (@matches) = @_;
+    my $max_len = max map { length($_->{out}) } @matches;
+    foreach my $line (@matches) {
+        $line->{out} .= ' ' x ($max_len - length($line->{out}));
     }
 }
-sub align {
-    my @matching = grep { defined $_->{match} } @lines;
-    my $width = max map { length($_->{result}) } @matching;
-    foreach my $line (@matching) {
-        if ($align_right) {
-            $line->{result} = sprintf('%*s', $width, $line->{result});
-        } else {
-            $line->{result} = sprintf('%-*s', $width, $line->{result});
+
+sub reset {
+    @lines = ();
+}
+
+sub require_pattern {
+    if (!scalar @alignments) {
+        my $pattern = shift(@ARGV);
+        if (!defined $pattern) {
+            die("no pattern specified\n");
         }
+        push(@alignments, { matcher => $matcher,
+                            pattern => $pattern,
+                            after_before => $after_before,
+                            left_right => $left_right });
     }
 }
+
+sub get_options {
+    Getopt::Long::Configure(qw(gnu_compat bundling no_ignore_case));
+    Getopt::Long::GetOptions(
+        'l|left|align-left'     => sub { $left_right = 'left'; },
+        'r|right|align-right'   => sub { $left_right = 'right'; },
+        'a|after|align-after'   => sub { $after_before = 'after'; },
+        'b|before|align-before' => sub { $after_before = 'before'; },
+        'e|pattern=s'           => sub {
+            push(@alignments, {
+                matcher => $matcher,
+                pattern => $_[1],
+                after_before => $after_before,
+                left_right => $left_right,
+            });
+        },
+        'F|fixed-strings'       => sub { $matcher = 'fixed'; },
+        'P|perl-regexp'         => sub { $matcher = 'perl'; },
+        's|skip=s'              => sub {
+            push(@alignments, {
+                matcher => $matcher,
+                pattern => $_[1],
+                after_before => $after_before,
+                left_right => $left_right,
+                skip => 1,
+            });
+        },
+        'h|help'                => sub { usage(); exit(0); },
+    ) or die(":-(\n");
+}
+
+sub usage { print <<"END"; }
+usage:
+    align [-e|--pattern=PATTERN] ...
+    align PATTERN ...
+options:
+    -l, --left
+    -r, --right
+    -a, --after
+    -b, --before
+    -R, --repeat
+    -F, --fixed-strings
+    -P, --perl-regexp
+    -s, --skip=PATTERN
+    -h, --help
+END
+
+# while (<>) {
+#     add_line($_);
+#     if (eof(\*ARGV)) {
+#         print_lines();
+#         reset();
+#     }
+# }
+
+# our $repeat;
+# our @lines;
+# our @instructions;
+# our $matcher;
+# our $align_after;
+# our $align_right;
+# BEGIN {
+#     reset();
+# }
+# sub reset {
+#     # after each file, instructions are executed, then this is
+#     # executed.
+#     $repeat = 0;
+#     @lines = ();
+#     @instructions = ();
+#     $matcher = 'perl';
+#     $align_after = 0;
+#     $align_right = 0;
+# }
+# sub add_line {
+#     my ($line) = @_;
+#     $line =~ s{\R\z}{};
+#     $line = expand($line);
+#     push(@lines, { line => $line, result => '' });
+# }
+# sub print_lines {
+#     foreach my $instruction (@instructions) {
+#         $instruction->();
+#     }
+#     foreach my $line (@lines) {
+#         print($line->{result} . $line->{line} . "\n");
+#     }
+# }
+# sub set_align_before { print("[B]\n"); push(@instructions, sub { print("before\n"); $align_after = 0; }); }
+# sub set_align_after  { print("[A]\n"); push(@instructions, sub { print("after\n");  $align_after = 1; }); }
+# sub set_align_right  { print("[R]\n"); push(@instructions, sub { print("right\n");  $align_right = 1; }); }
+# sub set_align_left   { print("[L]\n"); push(@instructions, sub { print("left\n");   $align_right = 0; }); }
+# sub add_pattern {
+#     my ($pattern) = @_;
+#     $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+#     push(@instructions, sub { swallow($pattern); });
+# }
+# sub skip_pattern {
+#     my ($pattern) = @_;
+#     $pattern = $matcher eq 'perl' ? qr{$pattern} : qr{\Q$pattern\E};
+#     push(@instructions, sub { swallow($pattern, skip => 1); });
+# }
+# sub set_repeat { push(@instructions, sub { print("repeat\n"); $repeat = 1; }); }
+# sub set_fixed_strings { $matcher = 'fixed'; }
+# sub set_perl_regexp { $matcher = 'perl'; }
+# sub swallow {
+#     my ($pattern, %args) = @_;
+#     print("swallow $pattern\n");
+#     my @matching;
+#     foreach my $line (@lines) {
+#         if ($line->{line} =~ $pattern) {
+#             $line->{pre} = $`;
+#             $line->{match} = $&;
+#             $line->{post} = $';
+#             push(@matching, $line);
+#         } else {
+#             delete $line->{pre};
+#             delete $line->{match};
+#             delete $line->{post};
+#         }
+#     }
+#     if ($args{skip}) {
+#         foreach my $line (@matching) {
+#             $line->{result} .= $line->{pre} . $line->{match};
+#             $line->{line} = $line->{post};
+#         }
+#     } elsif ($align_after) {
+#         foreach my $line (@matching) {
+#             $line->{result} .= $line->{pre} . $line->{match};
+#             $line->{line} = $line->{post};
+#         }
+#         align();
+#     } else {
+#         foreach my $line (@matching) {
+#             $line->{result} .= $line->{pre};
+#         }
+#         align();
+#         foreach my $line (@matching) {
+#             $line->{result} .= $line->{match};
+#             $line->{line} = $line->{post};
+#         }
+#     }
+# }
+# sub align {
+#     my @matching = grep { defined $_->{match} } @lines;
+#     my $width = max map { length($_->{result}) } @matching;
+#     foreach my $line (@matching) {
+#         if ($align_right) {
+#             $line->{result} = sprintf('%*s', $width, $line->{result});
+#         } else {
+#             $line->{result} = sprintf('%-*s', $width, $line->{result});
+#         }
+#     }
+# }
