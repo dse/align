@@ -1,0 +1,8 @@
+zero
+one<a>two
+three<b>four
+five<c>six
+seven<a>eight<b>nine
+ten<a>eleven<c>twelve
+thirteen<b>fourteen<c>fifteen
+sixteen<a>seventeen<b>eighteen<c>nineteen
